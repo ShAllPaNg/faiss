@@ -111,7 +111,7 @@ struct SearchResult {
  * @brief 向量数据容器
  */
 struct VectorData {
-    std::vector<float> data;     ///< 连续存储的向量数据
+    std::vector<float> m_data;    ///< 连续存储的向量数据
     size_t dimension;            ///< 向量维度
     size_t count;                ///< 向量数量
 
@@ -130,7 +130,7 @@ struct VectorData {
     VectorData(size_t dim, size_t cnt)
         : dimension(dim),
           count(cnt) {
-        data.resize(dim * cnt);
+        m_data.resize(dim * cnt);
     }
 
     /**
@@ -150,12 +150,28 @@ struct VectorData {
     }
 
     /**
+     * @brief 获取数据指针
+     * @return 数据指针
+     */
+    float* data() {
+        return m_data.data();
+    }
+
+    /**
+     * @brief 获取数据指针 (const版本)
+     * @return 数据指针
+     */
+    const float* data() const {
+        return m_data.data();
+    }
+
+    /**
      * @brief 获取指定索引的向量指针
      * @param idx 向量索引
      * @return 向量数据指针
      */
     float* Get(size_t idx) {
-        return data.data() + idx * dimension;
+        return m_data.data() + idx * dimension;
     }
 
     /**
@@ -164,7 +180,7 @@ struct VectorData {
      * @return 向量数据指针
      */
     const float* Get(size_t idx) const {
-        return data.data() + idx * dimension;
+        return m_data.data() + idx * dimension;
     }
 
     /**
@@ -173,14 +189,14 @@ struct VectorData {
      */
     void Resize(size_t cnt) {
         count = cnt;
-        data.resize(dimension * cnt);
+        m_data.resize(dimension * cnt);
     }
 
     /**
      * @brief 清空数据
      */
     void Clear() {
-        data.clear();
+        m_data.clear();
         count = 0;
     }
 };

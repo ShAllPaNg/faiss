@@ -58,16 +58,16 @@ VectorData VectorGenerator::Generate(size_t count) {
 void VectorGenerator::GenerateUniform(VectorData& data) {
     std::uniform_real_distribution<float> dist(m_config.minVal, m_config.maxVal);
 
-    for (size_t i = 0; i < data.data.size(); ++i) {
-        data.data[i] = dist(m_rng);
+    for (size_t i = 0; i < data.m_data.size(); ++i) {
+        data.m_data[i] = dist(m_rng);
     }
 }
 
 void VectorGenerator::GenerateNormal(VectorData& data) {
     std::normal_distribution<float> dist(m_config.mean, m_config.std);
 
-    for (size_t i = 0; i < data.data.size(); ++i) {
-        data.data[i] = dist(m_rng);
+    for (size_t i = 0; i < data.m_data.size(); ++i) {
+        data.m_data[i] = dist(m_rng);
     }
 }
 
@@ -134,7 +134,7 @@ void VectorGenerator::GenerateOrthogonal(VectorData& data) {
     // 如果请求的向量数量大于维度，剩余的用均匀分布填充
     for (size_t i = count; i < data.count; ++i) {
         for (size_t j = 0; j < dim; ++j) {
-            data.data[i * dim + j] = dist(m_rng);
+            data.m_data[i * dim + j] = dist(m_rng);
         }
     }
 }
@@ -153,8 +153,8 @@ bool VectorGenerator::SaveToFile(const VectorData& data, const std::string& file
     }
 
     // 写入向量数据
-    file.write(reinterpret_cast<const char*>(data.data.data()),
-               data.data.size() * sizeof(float));
+    file.write(reinterpret_cast<const char*>(data.data()),
+               data.m_data.size() * sizeof(float));
 
     if (!file) {
         std::cerr << "[ERROR] Failed to write vector data" << std::endl;
@@ -183,8 +183,8 @@ bool VectorGenerator::LoadFromFile(const std::string& filePath, VectorData& data
     data.Resize(data.count);
 
     // 读取向量数据
-    file.read(reinterpret_cast<char*>(data.data.data()),
-              data.data.size() * sizeof(float));
+    file.read(reinterpret_cast<char*>(data.data()),
+              data.m_data.size() * sizeof(float));
 
     if (!file) {
         std::cerr << "[ERROR] Failed to read vector data" << std::endl;

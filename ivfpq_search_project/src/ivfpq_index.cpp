@@ -41,10 +41,6 @@ bool IVFPQIndex::CreateIndex() {
     std::cout << "[INFO] Creating index: " << indexDesc << std::endl;
 
     try {
-        // 创建量化器 (用于IVF的coarse quantizer)
-        std::string quantizerDesc = "Flat";
-        faiss::Index* quantizer = nullptr;
-
         // 创建索引
         m_index.reset(static_cast<faiss::IndexIVFPQ*>(
             faiss::index_factory(m_dimension, indexDesc.c_str(), m_config.metric)
@@ -153,7 +149,7 @@ bool IVFPQIndex::Save(const std::string& indexPath) const {
     std::cout << "[INFO] Saving index to: " << indexPath << std::endl;
 
     try {
-        faiss::write_index(m_index.get(), indexPath);
+        faiss::write_index(m_index.get(), indexPath.c_str());
         std::cout << "[INFO] Index saved successfully" << std::endl;
         return true;
 
@@ -167,7 +163,7 @@ bool IVFPQIndex::Load(const std::string& indexPath) {
     std::cout << "[INFO] Loading index from: " << indexPath << std::endl;
 
     try {
-        std::unique_ptr<faiss::Index> loadedIndex(faiss::read_index(indexPath));
+        std::unique_ptr<faiss::Index> loadedIndex(faiss::read_index(indexPath.c_str()));
 
         if (!loadedIndex) {
             std::cerr << "[ERROR] Failed to load index" << std::endl;
