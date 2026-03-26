@@ -53,7 +53,7 @@ bool ConfigLoader::LoadFromFile(const std::string& configPath, GlobalConfig& con
             } else if (key == "database_count") {
                 config.vectorConfig.count = std::stoul(value);
             } else if (key == "train_count") {
-                // 单独存储训练集数量，不存入VectorConfig
+                config.trainCount = std::stoul(value);
             } else if (key == "query_count") {
                 // query数量单独处理
             } else if (key == "distribution") {

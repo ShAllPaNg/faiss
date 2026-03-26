@@ -209,6 +209,8 @@ struct GlobalConfig {
     IndexConfig indexConfig;
     SearchConfig searchConfig;
 
+    size_t trainCount;          ///< 训练集向量数量
+
     std::string trainVectorsPath;
     std::string databaseVectorsPath;
     std::string queryVectorsPath;
@@ -221,7 +223,7 @@ struct GlobalConfig {
      * @brief 默认构造函数
      */
     GlobalConfig()
-        : logLevel(2) {}
+        : trainCount(50000), logLevel(2) {}
 };
 
 } // namespace ivfpq_search

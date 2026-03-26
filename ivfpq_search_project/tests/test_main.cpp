@@ -56,7 +56,7 @@ int RunTest(const std::string& configPath) {
 
     // 生成训练集向量
     std::cout << "[INFO] Generating training vectors..." << std::endl;
-    VectorData trainVectors(config.vectorConfig.dimension, 50000);  // 默认5万训练向量
+    VectorData trainVectors(config.vectorConfig.dimension, config.trainCount);
     trainVectors = generator.Generate(trainVectors.Size());
 
     if (!generator.SaveToFile(trainVectors, config.trainVectorsPath)) {
