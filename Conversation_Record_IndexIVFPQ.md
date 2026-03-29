@@ -2125,3 +2125,126 @@ sim_table[list_no] = precomputed_table[list_no] - 2 * query_table
 **残差模式 = 向量分解 + 公式展开 + 预计算 + 查表**
 
 核心优化：用 **8 次查表** 替代 **128 维向量运算**！
+
+---
+
+## Conversation 24: by_residual=false 时的 PQ 中心表
+
+**User**: 以 by_residual 为 false 为前提。这种情况下是否就只有一个 pq 中心表了？
+
+**Assistant**: 
+是的。
+
+当 `by_residual = false` 时：
+- **只有 1 个 PQ 中心表**（`ProductQuantizer::centroids`），用于编码**原始向量**
+- 粗量化中心（nlist 个）仅用于**向量分配到桶**，不参与 PQ 编码
+- `precompute_table = false`，查询时不需要预计算 nlist 个表
+
+对比：
+
+| | by_residual=true | by_residual=false |
+|---|---|---|
+| PQ 编码对象 | 残差 (x - 粗中心) | 原始向量 x |
+| PQ 中心表数量 | 1 | 1 |
+| precompute_table | true (nlist个表) | false |
+
+---
+
+## Conversation 25: get_codes/get_ids 接口位置
+
+**User**: 后续会话仍以 by_residual=false 为前提。在检索向量，获取到 nprobe 个 list 后，应该需要将 list 中的 ids 和 pq codes 从磁盘读取到内存，这部分操作的代码在哪？
+
+**Assistant**: 
+在 `InvertedLists.h:66-73` 定义了接口。具体实现取决于使用的 InvertedLists 类型：
+
+**从磁盘读取**：`OnDiskInvertedLists.cpp:385-393`
+
+```cpp
+// OnDiskInvertedLists.cpp:385-400
+const uint8_t* OnDiskInvertedLists::get_codes(size_t list_no) const {
+    if (lists[list_no].offset == INVALID_OFFSET) {
+        return nullptr;
+    }
+    return ptr + lists[list_no].offset;
+}
+
+const idx_t* OnDiskInvertedLists::get_ids(size_t list_no) const {
+    if (lists[list_no].offset == INVALID_OFFSET) {
+        return nullptr;
+    }
+    return (const idx_t*)(ptr + lists[list_no].offset + 
+                          code_size * lists[list_no].capacity);
+}
+```
+
+**关键**：`OnDiskInvertedLists` 使用 **mmap** 将文件映射到虚拟内存：
+
+| 操作 | 位置 |
+|------|------|
+| 接口定义 | `InvertedLists.h:66-73` |
+| OnDisk 实现 | `OnDiskInvertedLists.cpp:385-400` |
+| mmap 初始化 | `OnDiskInvertedLists.cpp:268-289` |
+
+`get_codes/get_ids` **不会立即读取数据**，只返回 mmap 指针。实际数据由 OS 在访问时按需 **page in**。
+
+---
+
+## Conversation 26: IndexIVFPQ search 调用 get_codes/get_ids 的时机
+
+**User**: IndexIVFPQ 的 search 何时调用到这个接口？
+
+**Assistant**: 
+**调用链**：
+
+```
+IndexIVF::search (IndexIVF.cpp:304)
+    └─► quantizer->search()                    // 粗量化，找 nprobe 个桶
+    └─► search_preassigned() (IndexIVF.cpp:344)
+            └─► scan_one_list() (IndexIVF.cpp:517)
+                    ├─► ScopedCodes(invlists, key) → get_codes()  // 558行
+                    ├─► ScopedIds(invlists, key) → get_ids()      // 565行
+                    └─► scanner->scan_codes(list_size, codes, ids, ...)  // 583行
+```
+
+**关键代码** `IndexIVF.cpp:558-584`：
+
+```cpp
+InvertedLists::ScopedCodes scodes(invlists, key);  // → get_codes()
+const uint8_t* codes = scodes.get();
+
+sids = std::make_unique<InvertedLists::ScopedIds>(invlists, key);  // → get_ids()
+const idx_t* ids = sids->get();
+
+scanner->scan_codes(list_size, codes, ids, simi, idxi, k);
+```
+
+`ScopedCodes/ScopedIds` 构造函数内部调用 `get_codes/get_ids`（`InvertedLists.h:207,228`）。
+
+---
+
+## Conversation 27: OnDiskInvertedLists 继承关系
+
+**User**: OnDiskInvertedLists 是 InvertedList 的子类吗？
+
+**Assistant**: 
+是的。
+
+`OnDiskInvertedLists` **直接继承自 `InvertedLists`**：
+
+```cpp
+// OnDiskInvertedLists.h:60
+struct OnDiskInvertedLists : InvertedLists {
+```
+
+继承关系：
+
+```
+InvertedLists (基类)
+    ├─► ReadOnlyInvertedLists
+    ├─► ArrayInvertedLists
+    ├─► OnDiskInvertedLists      ← 直接继承
+    ├─► BlockInvertedLists
+    └─► ...其他
+```
+
+`OnDiskInvertedLists` 实现了完整的读写接口（`add_entries`, `update_entries`, `resize`），所以它不是只读的。
