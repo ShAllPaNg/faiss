@@ -2468,3 +2468,278 @@ IVF<nlist>,PQ<M>x<nbits>
     ↓
 PQ code: 8 字节 (压缩比 64:1)
 ```
+
+---
+
+## Conversation 34: IndexIVFPQ 量化器的磁盘存储机制
+
+**User**: IndexIVFPQ 中的一阶量化器是以指针保存在成员中的，那保存到磁盘时如何处理？以及从磁盘中读取索引时怎么分辨？从磁盘加载时会创建一个一阶量化器的实例吗？
+
+**Assistant**: 
+
+### 写入流程
+
+**`index_write.cpp:444-451`**：
+```cpp
+static void write_ivf_header(const IndexIVF* ivf, IOWriter* f) {
+    write_index_header(ivf, f);
+    WRITE1(ivf->nlist);
+    WRITE1(ivf->nprobe);
+    write_index(ivf->quantizer, f);  // 递归写入量化器
+    write_direct_map(&ivf->direct_map, f);
+}
+```
+
+**`write_index()` 使用 `dynamic_cast` 判断类型**：
+```cpp
+// index_write.cpp:846-854
+uint32_t h = dynamic_cast<const IndexHNSWFlatPanorama*>(idx) ? fourcc("IHfP")
+        : dynamic_cast<const IndexHNSWFlat*>(idx)   ? fourcc("IHNf")  // ← IndexHNSWFlat
+        : dynamic_cast<const IndexHNSWPQ*>(idx)     ? fourcc("IHNp")
+        : dynamic_cast<const IndexFlat*>(idx)       ? fourcc("IxF2")  // ← IndexFlat
+        ...
+WRITE1(h);  // 写入 4 字节类型标识
+// 然后写入索引具体数据
+```
+
+### 读取流程
+
+**`index_read.cpp:1045`**：
+```cpp
+ivf->quantizer = read_index(f);  // 读取量化器
+ivf->own_fields = true;          // IVF 拥有量化器所有权
+```
+
+**`read_index()` 根据 fourcc 创建实例**：
+```cpp
+// index_read.cpp:1121-1124
+std::unique_ptr<Index> read_index_up(IOReader* f, int io_flags) {
+    uint32_t h;
+    READ1(h);  // 读取 4 字节类型标识
+    
+    if (h == fourcc("IxF2")) {
+        idxf = std::make_unique<IndexFlatL2>();  // 创建 IndexFlat
+    } else if (h == fourcc("IHNf")) {
+        idxhnsw = std::make_unique<IndexHNSWFlat>();  // 创建 IndexHNSWFlat
+    }
+    // ... 读取索引数据
+}
+```
+
+### 磁盘文件结构
+
+```
+┌─────────────────────────────────────┐
+│ IndexIVFPQ Header                   │
+│   - nlist, nprobe, by_residual...   │
+├─────────────────────────────────────┤
+│ Quantizer (嵌套索引)                 │
+│   ┌─────────────────────────────┐   │
+│   │ fourcc ("IHNf" / "IxF2")    │   │ ← 4 字节类型标识
+│   │ IndexHNSWFlat / IndexFlat   │   │ ← 具体数据
+│   │   - HNSW 图 / codes         │   │
+│   └─────────────────────────────┘   │
+├─────────────────────────────────────┤
+│ ProductQuantizer                    │
+│   - M, nbits, centroids...          │
+├─────────────────────────────────────┤
+│ InvertedLists                       │
+│   - codes, ids...                   │
+└─────────────────────────────────────┘
+```
+
+### 关键点
+
+| 问题 | 答案 |
+|------|------|
+| 量化器如何保存？ | 递归调用 `write_index()`，写入类型标识 + 数据 |
+| 如何分辨类型？ | 使用 **fourcc**（4 字节字符码）如 `"IHNf"` |
+| 加载时创建实例？ | **是的**，`read_index()` 会 `new` 对应类型 |
+| 谁拥有所有权？ | `own_fields = true`，IVF 拥有量化器 |
+
+### 常见 fourcc 标识
+
+| fourcc | 类型 |
+|--------|------|
+| `IxF2` | IndexFlatL2 |
+| `IxFI` | IndexFlatIP |
+| `IHNf` | IndexHNSWFlat |
+| `IHNp` | IndexHNSWPQ |
+| `IwPQ` | IndexIVFPQ |
+| `IwQR` | IndexIVFPQR |
+
+---
+
+## Conversation 35: IndexIVFPQ 检索流程 (by_residual=false)
+
+**User**: 假设 by_residual = false，IndexIVFPQ 在检索阶段怎么调用到 PQ 距离计算的？给我分析下流程和函数调用链。
+
+**Assistant**: 
+
+### 完整调用链
+
+```
+IndexIVFPQ::search()
+    │
+    ├─► quantizer->search()          // 粗量化，找 nprobe 个桶
+    │
+    └─► search_preassigned()
+            │
+            └─► scan_one_list()      // 对每个选中的桶
+                    │
+                    ├─► get_codes() / get_ids()   // 从倒排列表获取 PQ codes
+                    │
+                    └─► scanner->scan_codes()
+                            │
+                            └─► scan_list_with_table()
+                                    │
+                                    └─► PQCodeDist::distance_single_code()
+                                            │
+                                            └─► 查表累加
+```
+
+### 关键代码分析
+
+#### 1. 查询初始化 `init_query_L2()` (IndexIVFPQ.cpp:577-583)
+
+```cpp
+void init_query_L2() {
+    if (!by_residual) {
+        // by_residual=false: 直接对查询向量计算距离表
+        pq.compute_distance_table(qi, sim_table);
+    } else if (use_precomputed_table) {
+        // by_residual=true: 计算内积表，后续再合并预计算表
+        pq.compute_inner_prod_table(qi, sim_table_2);
+    }
+}
+```
+
+**`compute_distance_table` 实现** (ProductQuantizer.cpp:440-467)：
+```cpp
+void ProductQuantizer::compute_distance_table(const float* x, float* dis_table) {
+    // 对每个子空间 m，计算 ||x[m] - c||² (c ∈ ksub 个中心)
+    for (size_t m = 0; m < M; m++) {
+        fvec_L2sqr_ny(
+            dis_table + m * ksub,  // 输出: M × ksub 的距离表
+            x + m * dsub,          // 查询的第 m 个子向量
+            get_centroids(m, 0),   // 第 m 个子空间的 ksub 个中心
+            dsub,                  // 子空间维度
+            ksub                   // 256
+        );
+    }
+}
+```
+
+**sim_table 布局**：
+```
+┌─────────────────┬─────────────────┬─────────────────┐
+│ 子空间 0        │ 子空间 1        │ ...  子空间 M-1 │
+│ 256 个距离      │ 256 个距离      │     256 个距离  │
+└─────────────────┴─────────────────┴─────────────────┘
+```
+
+#### 2. 列表初始化 `precompute_list_tables()` (IndexIVFPQ.cpp:599-611)
+
+```cpp
+float precompute_list_tables() {
+    float dis0 = 0;
+    if (by_residual) {
+        // by_residual=true: 需要合并预计算表
+        ...
+    }
+    // by_residual=false: dis0 = 0, sim_table 已经是最终的距离表
+    return dis0;
+}
+```
+
+**关键点**：`by_residual=false` 时，`dis0 = 0`，`sim_table` 在 `init_query_L2()` 中已经计算好了。
+
+#### 3. 扫描码 `scan_codes()` (IndexIVFPQ.cpp:1227-1251)
+
+```cpp
+size_t scan_codes(size_t ncode, const uint8_t* codes, const idx_t* ids, ...) {
+    if (this->polysemous_ht > 0) {
+        this->scan_list_polysemous(ncode, codes, res);
+    } else if (precompute_mode == 2) {
+        this->scan_list_with_table(ncode, codes, res);  // ← 主要路径
+    }
+    return res.nup;
+}
+```
+
+#### 4. 查表计算距离 `scan_list_with_table()` (IndexIVFPQ.cpp:861-932)
+
+```cpp
+template <class SearchResultType>
+void scan_list_with_table(size_t ncode, const uint8_t* codes, SearchResultType& res) {
+    for (size_t j = 0; j < ncode; j++) {
+        // 计算 PQ code 对应的距离
+        float dis = dis0 + PQCodeDist::distance_single_code(
+            pq.M, pq.nbits, sim_table, codes + j * pq.code_size);
+        res.add(j, dis);
+    }
+}
+```
+
+#### 5. 单码距离计算 `distance_single_code()` (pq_code_distance.h:63-82)
+
+```cpp
+static float distance_single_code(
+        size_t M, size_t nbits,
+        const float* sim_table,  // M × ksub 的距离表
+        const uint8_t* code) {   // M 字节的 PQ code
+    
+    PQDecoderT decoder(code, nbits);
+    const size_t ksub = 1 << nbits;  // 256
+    const float* tab = sim_table;
+    float result = 0;
+
+    for (size_t m = 0; m < M; m++) {
+        uint8_t cid = decoder.decode();   // 解码第 m 个子空间的中心 ID
+        result += tab[cid];               // 查表累加
+        tab += ksub;                      // 移动到下一个子空间的表
+    }
+    return result;
+}
+```
+
+### by_residual=false vs by_residual=true 对比
+
+| 步骤 | by_residual=false | by_residual=true |
+|------|-------------------|------------------|
+| `init_query_L2()` | `pq.compute_distance_table(qi, sim_table)` | `pq.compute_inner_prod_table(qi, sim_table_2)` |
+| `precompute_list_tables()` | **跳过**，dis0=0 | 合并预计算表到 sim_table |
+| sim_table 内容 | `‖q[m] - c‖²` (直接距离) | `term2 + term3` (需合并) |
+| dis0 | 0 | `‖q - y_C‖²` |
+| 最终距离 | `sum(sim_table[m][code[m]])` | `dis0 + sum(sim_table[m][code[m]])` |
+
+### 距离计算示意
+
+**by_residual=false 时**：
+```
+sim_table[m][c] = ‖q_sub[m] - centroid[m][c]‖²  (M × ksub 个值)
+
+距离 = Σ sim_table[m][code[m]]   // M 次查表累加
+```
+
+**示例 (M=8, nbits=8)**：
+```cpp
+// PQ code: [c0, c1, c2, c3, c4, c5, c6, c7]  (8 字节)
+// sim_table: 8 × 256 = 2048 个距离值
+
+float dist = 0;
+for (int m = 0; m < 8; m++) {
+    dist += sim_table[m * 256 + code[m]];  // 8 次查表
+}
+```
+
+### 总结
+
+| 组件 | 作用 |
+|------|------|
+| `init_query_L2()` | 计算查询向量到所有 PQ 中心的距离表 (M × ksub) |
+| `precompute_list_tables()` | by_residual=false 时跳过 |
+| `scan_list_with_table()` | 遍历列表中的 PQ codes |
+| `distance_single_code()` | M 次查表 + 累加得到距离 |
+
+**核心优化**：用 **M 次查表** 替代 **d 维向量距离计算**。
