@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -O2 CMakeFiles/test_ivfpq.dir/main.cpp.o CMakeFiles/test_ivfpq.dir/Config.cpp.o CMakeFiles/test_ivfpq.dir/VectorGenerator.cpp.o CMakeFiles/test_ivfpq.dir/IndexTest.cpp.o -o test_ivfpq  -Wl,-rpath,/home/yzc/faiss/buildDebug/faiss /home/yzc/faiss/buildDebug/faiss/libfaiss.so

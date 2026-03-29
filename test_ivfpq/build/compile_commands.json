@@ -1,0 +1,26 @@
+[
+{
+  "directory": "/home/yzc/faiss/test_ivfpq/build",
+  "command": "/usr/bin/c++  -I/home/yzc/faiss/test_ivfpq -I/home/yzc/faiss  -Wall -Wextra -O2 -std=gnu++17 -o CMakeFiles/test_ivfpq.dir/main.cpp.o -c /home/yzc/faiss/test_ivfpq/main.cpp",
+  "file": "/home/yzc/faiss/test_ivfpq/main.cpp",
+  "output": "CMakeFiles/test_ivfpq.dir/main.cpp.o"
+},
+{
+  "directory": "/home/yzc/faiss/test_ivfpq/build",
+  "command": "/usr/bin/c++  -I/home/yzc/faiss/test_ivfpq -I/home/yzc/faiss  -Wall -Wextra -O2 -std=gnu++17 -o CMakeFiles/test_ivfpq.dir/Config.cpp.o -c /home/yzc/faiss/test_ivfpq/Config.cpp",
+  "file": "/home/yzc/faiss/test_ivfpq/Config.cpp",
+  "output": "CMakeFiles/test_ivfpq.dir/Config.cpp.o"
+},
+{
+  "directory": "/home/yzc/faiss/test_ivfpq/build",
+  "command": "/usr/bin/c++  -I/home/yzc/faiss/test_ivfpq -I/home/yzc/faiss  -Wall -Wextra -O2 -std=gnu++17 -o CMakeFiles/test_ivfpq.dir/VectorGenerator.cpp.o -c /home/yzc/faiss/test_ivfpq/VectorGenerator.cpp",
+  "file": "/home/yzc/faiss/test_ivfpq/VectorGenerator.cpp",
+  "output": "CMakeFiles/test_ivfpq.dir/VectorGenerator.cpp.o"
+},
+{
+  "directory": "/home/yzc/faiss/test_ivfpq/build",
+  "command": "/usr/bin/c++  -I/home/yzc/faiss/test_ivfpq -I/home/yzc/faiss  -Wall -Wextra -O2 -std=gnu++17 -o CMakeFiles/test_ivfpq.dir/IndexTest.cpp.o -c /home/yzc/faiss/test_ivfpq/IndexTest.cpp",
+  "file": "/home/yzc/faiss/test_ivfpq/IndexTest.cpp",
+  "output": "CMakeFiles/test_ivfpq.dir/IndexTest.cpp.o"
+}
+]

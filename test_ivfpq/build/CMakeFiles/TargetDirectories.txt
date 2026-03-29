@@ -1,0 +1,3 @@
+/home/yzc/faiss/test_ivfpq/build/CMakeFiles/test_ivfpq.dir
+/home/yzc/faiss/test_ivfpq/build/CMakeFiles/edit_cache.dir
+/home/yzc/faiss/test_ivfpq/build/CMakeFiles/rebuild_cache.dir

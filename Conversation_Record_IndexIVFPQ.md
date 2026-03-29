@@ -2248,3 +2248,223 @@ InvertedLists (基类)
 ```
 
 `OnDiskInvertedLists` 实现了完整的读写接口（`add_entries`, `update_entries`, `resize`），所以它不是只读的。
+
+---
+
+## Conversation 28: 华为 C++ 编程风格偏好设置
+
+**User**: 你知道华为 C++ 的编程风格吗？知道的话，我需要你以后都按华为风格进行 C/C++ 编程。可以将这一指令保存到偏好里。
+
+**Assistant**: 
+是的，华为 C++ 编程风格主要包括：
+
+**命名规范**：
+- 类名：大驼峰（`MyClass`）
+- 函数名：大驼峰（`GetValue`）
+- 变量/参数：小驼峰（`totalCount`）
+- 成员变量：小驼峰+下划线后缀（`memberVar_`）
+- 常量/宏：全大写+下划线（`MAX_SIZE`）
+
+**代码格式**：
+- 缩进：4空格
+- 大括号：K&R风格（左括号不换行）
+- 行宽：不超过120字符
+
+**其他规范**：
+- 头文件包含顺序：系统头文件 → 标准库 → 第三方库 → 项目头文件
+- 优先使用 `const`、`constexpr`
+- 避免裸指针，优先智能指针
+- RAII 资源管理
+
+创建了 `/home/yzc/.opencode.md` 文件保存偏好。
+
+---
+
+## Conversation 29: 创建 IndexIVFPQ 测试项目
+
+**User**: 在 `/home/yzc/faiss` 目录下新建一个 `test_ivfpq` 目录，实现 C++ 测试项目：
+1. 创建 float 向量函数，维度可配置
+2. 创建 IndexIVFPQ 索引，一阶段量化使用 IndexHNSW
+3. 测试完整流程：train, add, 保存, 加载, 检索, 重排
+4. 使用 INI 配置文件
+
+**Assistant**: 
+创建了完整项目：
+
+```
+/home/yzc/faiss/test_ivfpq/
+├── CMakeLists.txt      # CMake 配置
+├── Config.h/cpp        # INI 配置读写
+├── VectorGenerator.h/cpp  # 随机向量生成
+├── IndexTest.h/cpp     # IndexIVFPQ 测试流程
+├── main.cpp            # 入口
+└── README.md           # 说明文档
+```
+
+**编译运行**：
+```bash
+cd /home/yzc/faiss/test_ivfpq/build
+cmake ..
+make -j$(nproc)
+LD_LIBRARY_PATH=/home/yzc/faiss/buildDebug/faiss:$LD_LIBRARY_PATH ./test_ivfpq -g   # 生成配置
+LD_LIBRARY_PATH=/home/yzc/faiss/buildDebug/faiss:$LD_LIBRARY_PATH ./test_ivfpq -c config.ini  # 运行
+```
+
+---
+
+## Conversation 30: 使用 IndexHNSWFlat 做一级量化器
+
+**User**: 能不能改用 IndexHNSWFlat 做一级量化器？
+
+**Assistant**: 
+可以。关键修改：
+
+1. 使用 `IndexHNSWFlat` 代替 `IndexFlat`
+2. 设置 `quantizer_trains_alone = 2`
+
+```cpp
+quantizer_ = new faiss::IndexHNSWFlat(config_.dimension_, config_.hnswM_);
+quantizer_->hnsw.efSearch = config_.hnswEfSearch_;
+
+index_ = new faiss::IndexIVFPQ(quantizer_, config_.dimension_, 
+                                config_.nlist_, config_.m_, config_.nbits_);
+index_->quantizer_trains_alone = 2;  // 关键！
+```
+
+**`quantizer_trains_alone` 含义**：
+
+| 值 | 含义 |
+|----|------|
+| 0 | 用 quantizer 做 k-means 聚类（默认，IndexFlat） |
+| 1 | quantizer 自己训练（MultiIndex, ResidualCoarseQuantizer） |
+| 2 | 先用 IndexFlatL2 做 k-means，再用质心训练 quantizer（IndexHNSWFlat） |
+
+**训练流程（quantizer_trains_alone=2）**：
+```
+1. Clustering → 得到 nlist 个质心
+2. quantizer->train(nlist, centroids)  // 训练 HNSW
+3. quantizer->add(nlist, centroids)    // 添加质心到 HNSW
+```
+
+测试通过，QPS: 1785.71
+
+---
+
+## Conversation 31: index_factory_sub 函数解析
+
+**User**: 浏览下当前文件的 index_factory_sub 函数，讲讲作用。
+
+**Assistant**: 
+**位置**：`faiss/index_factory.cpp:861-1126`
+
+**作用**：通过解析字符串描述来**递归构建复合索引**，是 `index_factory` 的核心实现。
+
+### 解析流程（从外到内）
+
+| 优先级 | 解析内容 | 示例 |
+|--------|----------|------|
+| 1 | IDMap/IDMap2 | `IDMap,Flat` 或 `Flat,IDMap` |
+| 2 | Refine 重排 | `IVF,PQ,RFlat` 或 `IVF,PQ,Refine(Flat)` |
+| 3 | VectorTransform | `PCA128,IVF,PQ`（会改变维度 d） |
+| 4 | 括号子索引 | `IVF(PQ8),Flat` → 递归解析括号内 |
+| 5 | 基础索引 | `Flat`, `HNSW32`, `NSG32` |
+| 6 | IVF 系列索引 | `IVF1024,PQ8` → 粗量化器 + 编码 |
+
+### 递归调用关系
+
+```
+index_factory("PCA64,IVF1024_HNSW32,PQ8")
+    └─► index_factory_sub("PCA64,IVF1024_HNSW32,PQ8")
+            ├─► parse_VectorTransform("PCA64") → PCAMatrix
+            └─► index_factory_sub(d=64, "IVF1024_HNSW32,PQ8")
+                    ├─► parse_coarse_quantizer("IVF1024_HNSW32")
+                    │       └─► new IndexHNSWFlat(32)
+                    └─► parse_IndexIVF("PQ8")
+                            └─► new IndexIVFPQ(quantizer, ...)
+```
+
+### 与 index_factory 的关系
+
+```cpp
+Index* index_factory(int d, const char* description, ...) {
+    return index_factory_sub(d, description, ...).release();
+}
+```
+
+---
+
+## Conversation 32: index_factory 创建 IndexIVFPQ 的字符串格式
+
+**User**: 如果想创建一个 IndexIVFPQ 对象，应该传入什么字符串？
+
+**Assistant**: 
+**基本格式**：
+```
+IVF<nlist>,PQ<M>x<nbits>
+```
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `nlist` | 聚类中心数量，支持 k/M 后缀 | `IVF1024`, `IVF10k`, `IVF1M` |
+| `M` | PQ 子空间数量 | `PQ8`, `PQ16` |
+| `nbits` | 每个子空间的比特数（可选，默认8） | `PQ8x4`, `PQ16x10` |
+| `np` | 禁用 polysemous 训练（可选） | `PQ8np` |
+
+### 常用示例
+
+| 字符串 | 说明 |
+|--------|------|
+| `IVF1024,PQ8` | nlist=1024, M=8, nbits=8（默认） |
+| `IVF1024,PQ16` | nlist=1024, M=16, nbits=8 |
+| `IVF100k,PQ8x4` | nlist=100000, M=8, nbits=4 |
+
+### 使用不同量化器
+
+| 字符串 | 量化器类型 |
+|--------|------------|
+| `IVF1024,PQ8` | IndexFlat（默认） |
+| `IVF1024_HNSW32,PQ8` | IndexHNSWFlat (M=32) |
+| `IVF1024_NSG32,PQ8` | IndexNSGFlat (R=32) |
+
+---
+
+## Conversation 33: PQ8 参数含义
+
+**User**: `IVF1024_HNSW32,PQ8` 这里 pq8 表示 pq 子空间为 8 吗？
+
+**Assistant**: 
+是的。
+
+`PQ8` 表示：
+- **M = 8**：将向量分成 **8 个子空间**
+- **nbits = 8**：每个子空间有 2^8 = 256 个中心点（默认值）
+
+### 完整解析 `IVF1024_HNSW32,PQ8`
+
+| 部分 | 含义 |
+|------|------|
+| `IVF1024` | nlist = 1024（1024 个聚类桶） |
+| `_HNSW32` | 使用 IndexHNSWFlat 作为量化器，HNSW M=32 |
+| `PQ8` | M=8 子空间，nbits=8（默认） |
+
+### PQ 编码参数
+
+| 写法 | M | nbits | 每子空间中心数 | code_size |
+|------|---|-------|---------------|-----------|
+| `PQ8` | 8 | 8 | 256 | 8 字节 |
+| `PQ16` | 16 | 8 | 256 | 16 字节 |
+| `PQ8x4` | 8 | 4 | 16 | 8 字节 |
+
+**code_size = M × ceil(nbits/8)**
+
+### 示例：128 维向量用 `PQ8`
+
+```
+原始向量: 128 维 float (512 字节)
+    ↓
+分成 8 个子空间，每个 16 维
+    ↓
+每个子空间用 8 bits (1 字节) 编码
+    ↓
+PQ code: 8 字节 (压缩比 64:1)
+```

@@ -10,6 +10,7 @@
 #include <random>
 
 #include <faiss/IndexFlat.h>
+#include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVFPQ.h>
 
 using idx_t = faiss::idx_t;
@@ -17,7 +18,7 @@ using idx_t = faiss::idx_t;
 int main() {
     int d = 64;      // dimension
     int nb = 100000; // database size
-    int nq = 10000;  // nb of queries
+    int nq = 10;  // nb of queries
 
     std::mt19937 rng;
     std::uniform_real_distribution<> distrib;
@@ -42,7 +43,8 @@ int main() {
     int nlist = 100;
     int k = 4;
     int m = 8;                       // bytes per vector
-    faiss::IndexFlatL2 quantizer(d); // the other index
+   // faiss::IndexFlatL2 quantizer(d); // the other index
+    faiss::IndexHNSWFlat quantizer(d,32); // the other index
     faiss::IndexIVFPQ index(&quantizer, d, nlist, m, 8);
 
     index.train(nb, xb);
